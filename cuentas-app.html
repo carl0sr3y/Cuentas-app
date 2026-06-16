@@ -1,4 +1,4 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -586,7 +586,19 @@ function signInWithGoogle() {
       } catch(e) {}
       updateDriveBtn(true);
       toast('✓ Conectado con Google Drive');
-      await saveToDrive();
+      // First try to load from Drive — if Drive has data, use it
+      // Only upload local data if Drive is empty AND we have local accounts
+      const fileId = await getDriveFileId(true);
+      if (fileId) {
+        // Drive already has data — load it, don't overwrite
+        await loadFromDrive(false);
+      } else if (data.accounts && data.accounts.length > 0) {
+        // Drive is empty and we have local data — upload it
+        await saveToDrive();
+        toast('✓ Datos subidos a Drive');
+      } else {
+        toast('Drive conectado — sin datos aún');
+      }
       renderDriveScreen();
     }
   });
@@ -705,6 +717,8 @@ async function loadFromDrive(silent=false) {
 function scheduleSave() {
   saveLocal(data);
   if (!accessToken) return;
+  // Never overwrite Drive with empty data
+  if (!data.accounts || data.accounts.length === 0) return;
   setSyncDot('syncing');
   clearTimeout(syncTimeout);
   syncTimeout = setTimeout(() => saveToDrive(), 1500);
