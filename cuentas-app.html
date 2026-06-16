@@ -59,6 +59,8 @@
   }
   .back-btn:active { opacity: .7; }
   .header-title { font-size: 20px; font-weight: 700; flex: 1; }
+
+  /* DRIVE BUTTON + SYNC INDICATOR */
   .drive-btn {
     background: var(--surface);
     border: 1.5px solid var(--border);
@@ -68,26 +70,23 @@
     font-size: 12px;
     font-weight: 600;
     cursor: pointer;
-    display: flex; align-items: center; gap: 5px;
+    display: flex; align-items: center; gap: 6px;
     white-space: nowrap;
     transition: all .15s;
   }
   .drive-btn.connected { color: var(--green); border-color: var(--green-dim); }
   .drive-btn:active { opacity: .7; }
-
-  /* SYNC BAR */
-  .sync-bar {
-    background: var(--blue-dim);
-    border-bottom: 1px solid var(--border);
-    padding: 8px 16px;
-    font-size: 12px;
-    color: var(--blue);
-    display: flex;
-    align-items: center;
-    gap: 8px;
+  .sync-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+    transition: background .3s;
   }
-  .sync-bar.error { background: var(--red-dim); color: var(--red); }
-  .sync-bar.success { background: var(--green-dim); color: var(--green); }
+  .sync-dot.syncing  { background: var(--blue); animation: pulse 1s infinite; }
+  .sync-dot.synced   { background: var(--green); }
+  .sync-dot.error    { background: var(--red); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 
   /* BUTTONS */
   .main-actions { padding: 16px; display: flex; gap: 10px; }
@@ -144,9 +143,18 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 13px;
     flex-shrink: 0;
-    transition: background .15s, border-color .15s;
   }
   .account-item.selected .account-check { background: var(--red); border-color: var(--red); color: #fff; }
+  .account-item.favorite { border-color: #f5c542 !important; }
+  .fav-btn {
+    background: none; border: none;
+    font-size: 20px; cursor: pointer;
+    padding: 2px 4px; flex-shrink: 0;
+    line-height: 1; opacity: .3;
+    transition: opacity .15s, transform .15s;
+  }
+  .fav-btn.active { opacity: 1; }
+  .fav-btn:active { transform: scale(1.3); }
   .account-icon {
     width: 42px; height: 42px;
     border-radius: 12px;
@@ -182,9 +190,7 @@
     background: var(--surface);
     border-radius: var(--radius-sm);
     padding: 13px 14px;
-    display: flex;
-    align-items: center;
-    gap: 12px;
+    display: flex; align-items: center; gap: 12px;
     margin-bottom: 6px;
     border-left: 3px solid transparent;
     cursor: pointer;
@@ -198,8 +204,7 @@
     width: 36px; height: 36px;
     border-radius: 50%;
     display: flex; align-items: center; justify-content: center;
-    font-size: 16px;
-    flex-shrink: 0;
+    font-size: 16px; flex-shrink: 0;
   }
   .tx-dot.income  { background: var(--green-dim); }
   .tx-dot.expense { background: var(--red-dim); }
@@ -217,22 +222,28 @@
     display: flex; gap: 10px;
   }
 
-  /* MODAL */
+  /* MODAL — aligned to top when keyboard opens */
   .overlay {
     position: fixed; inset: 0;
-    background: rgba(0,0,0,.6);
+    background: rgba(0,0,0,.65);
     backdrop-filter: blur(3px);
     z-index: 100;
-    display: flex; align-items: flex-end; justify-content: center;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 60px;
+    overflow-y: auto;
   }
   .modal {
     background: var(--surface);
-    border-radius: 22px 22px 0 0;
-    padding: 24px 20px 36px;
-    width: 100%; max-width: 480px;
-    animation: slideUp .22s ease;
+    border-radius: 22px;
+    padding: 24px 20px 28px;
+    width: calc(100% - 32px);
+    max-width: 440px;
+    animation: slideDown .22s ease;
+    margin-bottom: 20px;
   }
-  @keyframes slideUp { from { transform: translateY(60px); opacity: 0; } }
+  @keyframes slideDown { from { transform: translateY(-30px); opacity: 0; } }
   .modal-title { font-size: 18px; font-weight: 700; margin-bottom: 18px; text-align: center; }
   .modal-body  { font-size: 15px; color: var(--text-muted); text-align: center; line-height: 1.6; margin-bottom: 22px; }
   .modal input {
@@ -250,38 +261,92 @@
   .modal input:focus { border-color: var(--accent); }
   .modal-actions { display: flex; gap: 10px; }
 
-  /* DRIVE SCREEN */
-  .drive-screen {
-    padding: 32px 20px;
-    text-align: center;
+  /* AMOUNT ROW with calculator button */
+  .amount-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
   }
-  .drive-icon { font-size: 56px; margin-bottom: 16px; }
-  .drive-title { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
-  .drive-sub { font-size: 15px; color: var(--text-muted); line-height: 1.6; margin-bottom: 28px; }
-  .drive-user {
-    background: var(--surface);
-    border-radius: var(--radius);
-    padding: 14px 16px;
-    display: flex; align-items: center; gap: 12px;
-    margin-bottom: 16px;
-    text-align: left;
+  .amount-row input {
+    flex: 1;
+    margin-bottom: 0 !important;
   }
-  .drive-avatar {
-    width: 40px; height: 40px;
-    border-radius: 50%;
-    background: var(--blue-dim);
+  .calc-btn {
+    background: var(--surface2);
+    border: 1.5px solid var(--border);
+    color: var(--text);
+    border-radius: var(--radius-sm);
+    width: 50px;
+    font-size: 20px;
+    cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    font-size: 18px;
     flex-shrink: 0;
+    transition: background .15s;
   }
-  .drive-user-name { font-weight: 600; font-size: 15px; }
+  .calc-btn:active { background: var(--border); }
+
+  /* CALCULATOR POPUP */
+  .calc-popup {
+    background: var(--surface2);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+  .calc-display {
+    background: var(--bg);
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-size: 22px;
+    font-weight: 700;
+    text-align: right;
+    margin-bottom: 10px;
+    min-height: 48px;
+    color: var(--text);
+    word-break: break-all;
+    border: 1.5px solid var(--border);
+  }
+  .calc-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 7px;
+  }
+  .calc-key {
+    background: var(--surface);
+    border: none;
+    color: var(--text);
+    border-radius: 10px;
+    padding: 14px 4px;
+    font-size: 17px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .1s, transform .1s;
+  }
+  .calc-key:active { background: var(--border); transform: scale(.94); }
+  .calc-key.op  { color: var(--blue); }
+  .calc-key.eq  { background: var(--accent); color: #fff; }
+  .calc-key.eq:active { background: #4070d0; }
+  .calc-key.clr { color: var(--red); }
+  .calc-key.span2 { grid-column: span 2; }
+
+  /* DRIVE SCREEN */
+  .drive-screen { padding: 32px 20px; text-align: center; }
+  .drive-icon  { font-size: 56px; margin-bottom: 16px; }
+  .drive-title { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
+  .drive-sub   { font-size: 15px; color: var(--text-muted); line-height: 1.6; margin-bottom: 28px; }
+  .drive-user  {
+    background: var(--surface); border-radius: var(--radius);
+    padding: 14px 16px; display: flex; align-items: center; gap: 12px;
+    margin-bottom: 16px; text-align: left;
+  }
+  .drive-avatar { width:40px;height:40px;border-radius:50%;background:var(--blue-dim);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0; }
+  .drive-user-name  { font-weight: 600; font-size: 15px; }
   .drive-user-email { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
   .drive-actions { display: flex; flex-direction: column; gap: 10px; }
 
   /* TOAST */
   .toast {
-    position: fixed;
-    bottom: 24px;
+    position: fixed; bottom: 24px;
     left: 50%; transform: translateX(-50%);
     background: var(--surface2);
     border: 1px solid var(--border);
@@ -296,9 +361,6 @@
   }
   @keyframes fadeIn { from { opacity: 0; transform: translateX(-50%) translateY(8px); } }
 
-  .spinning { animation: spin 1s linear infinite; display: inline-block; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-
   .hidden { display: none !important; }
   ::-webkit-scrollbar { width: 4px; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
@@ -311,11 +373,10 @@
   <div class="header">
     <div class="header-title">💼 Cuentas</div>
     <button class="drive-btn" id="drive-status-btn" onclick="openDriveScreen()">
-      <span id="drive-status-icon">☁️</span>
+      <span class="sync-dot" id="sync-dot"></span>
       <span id="drive-status-text">Drive</span>
     </button>
   </div>
-  <div id="sync-bar" class="sync-bar hidden"></div>
   <div class="main-actions">
     <button class="btn btn-primary" onclick="openModal('modal-new-account')">＋ Nueva cuenta</button>
     <button class="btn btn-danger" id="btn-delete-mode" onclick="toggleDeleteMode()">🗑 Eliminar</button>
@@ -359,7 +420,7 @@
   <div class="drive-screen" id="drive-content"></div>
 </div>
 
-<!-- MODALS -->
+<!-- MODAL: Nueva cuenta -->
 <div class="overlay hidden" id="modal-new-account" onclick="closeModalOutside(event,'modal-new-account')">
   <div class="modal">
     <div class="modal-title">Nueva cuenta</div>
@@ -371,6 +432,7 @@
   </div>
 </div>
 
+<!-- MODAL: Confirmar eliminar cuentas -->
 <div class="overlay hidden" id="modal-confirm-delete" onclick="closeModalOutside(event,'modal-confirm-delete')">
   <div class="modal">
     <div class="modal-title">⚠️ Eliminar cuentas</div>
@@ -382,11 +444,39 @@
   </div>
 </div>
 
+<!-- MODAL: Agregar transacción -->
 <div class="overlay hidden" id="modal-add-tx" onclick="closeModalOutside(event,'modal-add-tx')">
   <div class="modal">
     <div class="modal-title" id="modal-tx-title">Agregar entrada</div>
     <input type="text" id="input-tx-desc" placeholder="Descripción (ej: Pago cliente)" maxlength="60">
-    <input type="number" id="input-tx-amount" placeholder="Monto (ej: 250.00)" step="0.01" min="0.01">
+    <div class="amount-row">
+      <input type="number" id="input-tx-amount" placeholder="Monto (ej: 250.00)" step="0.01" min="0.01">
+      <button class="calc-btn" onclick="toggleCalc()" title="Calculadora">🧮</button>
+    </div>
+    <!-- CALCULADORA -->
+    <div class="calc-popup hidden" id="calc-popup">
+      <div class="calc-display" id="calc-display">0</div>
+      <div class="calc-grid">
+        <button class="calc-key clr span2" onclick="calcAction('C')">C</button>
+        <button class="calc-key op" onclick="calcAction('⌫')">⌫</button>
+        <button class="calc-key op" onclick="calcAction('/')">÷</button>
+        <button class="calc-key" onclick="calcAction('7')">7</button>
+        <button class="calc-key" onclick="calcAction('8')">8</button>
+        <button class="calc-key" onclick="calcAction('9')">9</button>
+        <button class="calc-key op" onclick="calcAction('*')">×</button>
+        <button class="calc-key" onclick="calcAction('4')">4</button>
+        <button class="calc-key" onclick="calcAction('5')">5</button>
+        <button class="calc-key" onclick="calcAction('6')">6</button>
+        <button class="calc-key op" onclick="calcAction('-')">−</button>
+        <button class="calc-key" onclick="calcAction('1')">1</button>
+        <button class="calc-key" onclick="calcAction('2')">2</button>
+        <button class="calc-key" onclick="calcAction('3')">3</button>
+        <button class="calc-key op" onclick="calcAction('+')">+</button>
+        <button class="calc-key span2" onclick="calcAction('0')">0</button>
+        <button class="calc-key" onclick="calcAction('.')">.</button>
+        <button class="calc-key eq" onclick="calcAction('=')">＝</button>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-neutral btn-full" onclick="closeModal('modal-add-tx')">Cancelar</button>
       <button class="btn btn-primary btn-full" id="btn-save-tx" onclick="saveTx()">Guardar</button>
@@ -394,6 +484,7 @@
   </div>
 </div>
 
+<!-- MODAL: Confirmar eliminar transacción -->
 <div class="overlay hidden" id="modal-confirm-tx-delete" onclick="closeModalOutside(event,'modal-confirm-tx-delete')">
   <div class="modal">
     <div class="modal-title">⚠️ Eliminar transacción</div>
@@ -423,6 +514,8 @@ let accessToken = null;
 let driveFileId = null;
 let userInfo = null;
 let syncTimeout = null;
+let calcExpr = '';
+let calcHasResult = false;
 
 // ══════════════ LOCAL STORAGE ══════════════
 function loadLocal() {
@@ -453,25 +546,25 @@ function toast(msg, dur=2400) {
   document.body.appendChild(el);
   setTimeout(() => el.remove(), dur);
 }
-function showSync(msg, type='info') {
-  const bar = document.getElementById('sync-bar');
-  bar.textContent = msg;
-  bar.className = `sync-bar ${type}`;
-  bar.classList.remove('hidden');
-  if (type !== 'info') setTimeout(() => bar.classList.add('hidden'), 3000);
-}
-function hideSync() { document.getElementById('sync-bar').classList.add('hidden'); }
 
-// ══════════════ GOOGLE OAUTH ══════════════
+// ══════════════ SYNC DOT ══════════════
+function setSyncDot(state) {
+  // state: 'off' | 'syncing' | 'synced' | 'error'
+  const dot = document.getElementById('sync-dot');
+  if (!dot) return;
+  dot.className = 'sync-dot';
+  if (state !== 'off') dot.classList.add(state);
+  if (state === 'synced') setTimeout(() => { dot.className = 'sync-dot synced'; }, 100);
+}
+
+// ══════════════ GOOGLE AUTH ══════════════
 function initGoogleAuth() {
-  // Check saved token
   const saved = localStorage.getItem('cuentas_token');
   const savedUser = localStorage.getItem('cuentas_user');
   if (saved) {
     accessToken = saved;
     if (savedUser) userInfo = JSON.parse(savedUser);
     updateDriveBtn(true);
-    // Auto-load from Drive on start
     loadFromDrive(true);
   }
 }
@@ -484,7 +577,6 @@ function signInWithGoogle() {
       if (resp.error) { toast('Error al conectar con Google'); return; }
       accessToken = resp.access_token;
       localStorage.setItem('cuentas_token', accessToken);
-      // Get user info
       try {
         const r = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
           headers: { Authorization: 'Bearer ' + accessToken }
@@ -494,7 +586,6 @@ function signInWithGoogle() {
       } catch(e) {}
       updateDriveBtn(true);
       toast('✓ Conectado con Google Drive');
-      // Upload current data
       await saveToDrive();
       renderDriveScreen();
     }
@@ -503,39 +594,27 @@ function signInWithGoogle() {
 }
 
 function signOut() {
-  accessToken = null;
-  driveFileId = null;
-  userInfo = null;
+  accessToken = null; driveFileId = null; userInfo = null;
   localStorage.removeItem('cuentas_token');
   localStorage.removeItem('cuentas_user');
   localStorage.removeItem('cuentas_file_id');
   updateDriveBtn(false);
+  setSyncDot('off');
   toast('Sesión cerrada');
   renderDriveScreen();
 }
 
 function updateDriveBtn(connected) {
   const btn = document.getElementById('drive-status-btn');
-  const icon = document.getElementById('drive-status-icon');
-  const text = document.getElementById('drive-status-text');
-  if (connected) {
-    btn.className = 'drive-btn connected';
-    icon.textContent = '✓';
-    text.textContent = 'Drive';
-  } else {
-    btn.className = 'drive-btn';
-    icon.textContent = '☁️';
-    text.textContent = 'Drive';
-  }
+  btn.className = connected ? 'drive-btn connected' : 'drive-btn';
+  setSyncDot(connected ? 'synced' : 'off');
 }
 
-// ══════════════ GOOGLE DRIVE API ══════════════
+// ══════════════ DRIVE API ══════════════
 async function getDriveFileId() {
   if (driveFileId) return driveFileId;
   const saved = localStorage.getItem('cuentas_file_id');
   if (saved) { driveFileId = saved; return driveFileId; }
-
-  // Search in appDataFolder
   const r = await fetch(
     'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name%3D%27' + DRIVE_FILE + '%27&fields=files(id)',
     { headers: { Authorization: 'Bearer ' + accessToken } }
@@ -550,21 +629,18 @@ async function getDriveFileId() {
 
 async function saveToDrive() {
   if (!accessToken) return;
-  showSync('⟳ Guardando en Drive...');
+  setSyncDot('syncing');
   try {
     const fileId = await getDriveFileId();
     const content = JSON.stringify(data);
     const blob = new Blob([content], { type: 'application/json' });
-
     if (fileId) {
-      // Update existing
       await fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
         method: 'PATCH',
         headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
         body: content
       });
     } else {
-      // Create new in appDataFolder
       const meta = JSON.stringify({ name: DRIVE_FILE, parents: ['appDataFolder'] });
       const form = new FormData();
       form.append('metadata', new Blob([meta], { type: 'application/json' }));
@@ -578,21 +654,18 @@ async function saveToDrive() {
       driveFileId = d.id;
       localStorage.setItem('cuentas_file_id', driveFileId);
     }
-    showSync('✓ Guardado en Drive', 'success');
+    setSyncDot('synced');
   } catch(e) {
-    showSync('✗ Error al guardar en Drive', 'error');
+    setSyncDot('error');
   }
 }
 
 async function loadFromDrive(silent=false) {
   if (!accessToken) return;
-  if (!silent) showSync('⟳ Cargando desde Drive...');
+  if (!silent) setSyncDot('syncing');
   try {
     const fileId = await getDriveFileId();
-    if (!fileId) {
-      if (!silent) toast('No hay datos en Drive aún');
-      return;
-    }
+    if (!fileId) { if (!silent) toast('No hay datos en Drive aún'); return; }
     const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
@@ -601,22 +674,48 @@ async function loadFromDrive(silent=false) {
       data = d;
       saveLocal(data);
       renderHome();
-      if (!silent) showSync('✓ Datos cargados desde Drive', 'success');
-      else hideSync();
+      setSyncDot('synced');
+      if (!silent) toast('✓ Datos cargados desde Drive');
     }
   } catch(e) {
-    if (!silent) showSync('✗ Error al cargar desde Drive', 'error');
-    else hideSync();
+    setSyncDot('error');
+    if (!silent) toast('✗ Error al cargar desde Drive');
   }
 }
 
-// Auto-sync after changes (debounced)
 function scheduleSave() {
   saveLocal(data);
   if (!accessToken) return;
+  setSyncDot('syncing');
   clearTimeout(syncTimeout);
   syncTimeout = setTimeout(() => saveToDrive(), 1500);
 }
+
+// ══════════════ AUTO-SYNC ══════════════
+let lastSyncedData = null;
+async function autoSyncFromDrive() {
+  if (!accessToken) return;
+  try {
+    const fileId = await getDriveFileId();
+    if (!fileId) return;
+    const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
+      headers: { Authorization: 'Bearer ' + accessToken }
+    });
+    const d = await r.json();
+    if (!d.accounts) return;
+    const incoming = JSON.stringify(d);
+    if (incoming === lastSyncedData) return;
+    lastSyncedData = incoming;
+    data = d;
+    saveLocal(data);
+    const homeVisible   = !document.getElementById('screen-home').classList.contains('hidden');
+    const detailVisible = !document.getElementById('screen-detail').classList.contains('hidden');
+    if (homeVisible)   renderHome();
+    if (detailVisible) renderDetail();
+    setSyncDot('synced');
+  } catch(e) {}
+}
+setInterval(autoSyncFromDrive, 30000);
 
 // ══════════════ DRIVE SCREEN ══════════════
 function openDriveScreen() {
@@ -634,37 +733,26 @@ function renderDriveScreen() {
     el.innerHTML = `
       <div class="drive-icon">☁️</div>
       <div class="drive-title">Conectar Google Drive</div>
-      <div class="drive-sub">Tus datos se guardarán automáticamente en tu Google Drive privado. Funciona en todos tus dispositivos con la misma cuenta.</div>
+      <div class="drive-sub">Tus datos se guardarán automáticamente en tu Google Drive privado.</div>
       <div class="drive-actions">
-        <button class="btn btn-primary btn-full" style="padding:16px" onclick="signInWithGoogle()">
-          Conectar con Google
-        </button>
+        <button class="btn btn-primary btn-full" style="padding:16px" onclick="signInWithGoogle()">Conectar con Google</button>
       </div>`;
   } else {
-    const name = userInfo?.name || 'Usuario';
+    const name  = userInfo?.name  || 'Usuario';
     const email = userInfo?.email || '';
     el.innerHTML = `
       <div class="drive-icon">✅</div>
       <div class="drive-title">Drive conectado</div>
       <div class="drive-user">
         <div class="drive-avatar">👤</div>
-        <div>
-          <div class="drive-user-name">${name}</div>
-          <div class="drive-user-email">${email}</div>
-        </div>
+        <div><div class="drive-user-name">${name}</div><div class="drive-user-email">${email}</div></div>
       </div>
       <div class="drive-actions">
-        <button class="btn btn-primary btn-full" style="padding:14px" onclick="loadFromDrive()">
-          ↓ Cargar datos desde Drive
-        </button>
-        <button class="btn btn-neutral btn-full" style="padding:14px" onclick="saveToDrive()">
-          ↑ Guardar ahora en Drive
-        </button>
-        <button class="btn btn-danger btn-full" style="padding:14px; margin-top:8px" onclick="signOut()">
-          Cerrar sesión de Google
-        </button>
+        <button class="btn btn-primary btn-full" style="padding:14px" onclick="loadFromDrive()">↓ Cargar datos desde Drive</button>
+        <button class="btn btn-neutral btn-full" style="padding:14px" onclick="saveToDrive()">↑ Guardar ahora en Drive</button>
+        <button class="btn btn-danger btn-full" style="padding:14px;margin-top:8px" onclick="signOut()">Cerrar sesión de Google</button>
       </div>
-      <div style="margin-top:20px; font-size:12px; color:var(--text-muted); line-height:1.6">
+      <div style="margin-top:20px;font-size:12px;color:var(--text-muted);line-height:1.6">
         Los datos se sincronizan automáticamente cada vez que haces un cambio.
       </div>`;
   }
@@ -672,25 +760,53 @@ function renderDriveScreen() {
 
 // ══════════════ HOME SCREEN ══════════════
 function renderHome() {
-  const list = document.getElementById('account-list');
+  const list  = document.getElementById('account-list');
   const label = document.getElementById('accounts-label');
   list.innerHTML = '';
   if (!data.accounts.length) {
     label.textContent = '';
-    list.innerHTML = `<div class="empty">
-      <div class="empty-icon">💼</div>
-      <div class="empty-title">Sin cuentas aún</div>
-      <div class="empty-sub">Toca "Nueva cuenta" para empezar a llevar tu dinero.</div>
-    </div>`;
+    list.innerHTML = `<div class="empty"><div class="empty-icon">💼</div><div class="empty-title">Sin cuentas aún</div><div class="empty-sub">Toca "Nueva cuenta" para empezar a llevar tu dinero.</div></div>`;
     return;
   }
   label.textContent = `Tus cuentas (${data.accounts.length})`;
-  data.accounts.forEach(acc => {
-    const balance = (acc.transactions||[]).reduce((s,t) => s+(t.type==='income'?t.amount:-t.amount),0);
-    const txCount = (acc.transactions||[]).length;
+
+  // Sort: favorites first, then alphabetically within each group
+  const sorted = [...data.accounts].sort((a, b) => {
+    if (!!a.favorite === !!b.favorite) return a.name.localeCompare(b.name, 'es');
+    return a.favorite ? -1 : 1;
+  });
+
+  let shownFavLabel = false;
+  let shownRestLabel = false;
+  const hasFavs = sorted.some(a => a.favorite);
+
+  sorted.forEach(acc => {
+    const balance    = (acc.transactions||[]).reduce((s,t) => s+(t.type==='income'?t.amount:-t.amount), 0);
+    const txCount    = (acc.transactions||[]).length;
     const isSelected = selectedAccounts.has(acc.id);
+    const isFav      = !!acc.favorite;
+
+    // Section labels
+    if (hasFavs) {
+      if (isFav && !shownFavLabel) {
+        shownFavLabel = true;
+        const lbl = document.createElement('div');
+        lbl.className = 'section-label';
+        lbl.textContent = '⭐ Favoritos';
+        list.appendChild(lbl);
+      }
+      if (!isFav && !shownRestLabel) {
+        shownRestLabel = true;
+        const lbl = document.createElement('div');
+        lbl.className = 'section-label';
+        lbl.style.marginTop = '8px';
+        lbl.textContent = 'Todas las cuentas';
+        list.appendChild(lbl);
+      }
+    }
+
     const div = document.createElement('div');
-    div.className = `account-item${isSelected?' selected':''}`;
+    div.className = `account-item${isSelected?' selected':''}${isFav?' favorite':''}`;
     div.innerHTML = `
       <div class="account-check" style="display:${deleteMode?'flex':'none'}">${isSelected?'✓':''}</div>
       <div class="account-icon">💳</div>
@@ -698,7 +814,16 @@ function renderHome() {
         <div class="account-name">${acc.name}</div>
         <div class="account-sub">${txCount} transacción${txCount!==1?'es':''}</div>
       </div>
-      <div class="account-balance ${balance>=0?'positive':'negative'}">${fmt(balance)}</div>`;
+      <div class="account-balance ${balance>=0?'positive':'negative'}">${fmt(balance)}</div>
+      <button class="fav-btn${isFav?' active':''}" title="${isFav?'Quitar favorito':'Marcar favorito'}">⭐</button>`;
+
+    // Star button — toggle favorite without opening account
+    div.querySelector('.fav-btn').onclick = (e) => {
+      e.stopPropagation();
+      const a = data.accounts.find(x => x.id === acc.id);
+      if (a) { a.favorite = !a.favorite; scheduleSave(); renderHome(); }
+    };
+
     div.onclick = () => deleteMode ? toggleAccountSelect(acc.id) : openAccount(acc.id);
     list.appendChild(div);
   });
@@ -738,6 +863,9 @@ function deleteSelectedAccounts() {
 function createAccount() {
   const name = document.getElementById('input-account-name').value.trim();
   if (!name) { toast('Escribe un nombre para la cuenta'); return; }
+  // No duplicates
+  const exists = data.accounts.some(a => a.name.toLowerCase() === name.toLowerCase());
+  if (exists) { toast('Ya existe una cuenta con ese nombre'); return; }
   data.accounts.push({ id: uid(), name, transactions: [] });
   scheduleSave();
   closeModal('modal-new-account');
@@ -749,6 +877,8 @@ function createAccount() {
 // ══════════════ DETAIL SCREEN ══════════════
 function openAccount(id) {
   currentAccountId = id; selectedTxId = null;
+  // Push state for browser back button
+  history.pushState({ screen: 'detail', accountId: id }, '');
   document.getElementById('screen-home').classList.add('hidden');
   document.getElementById('screen-detail').classList.remove('hidden');
   document.getElementById('delete-tx-bar').classList.add('hidden');
@@ -763,7 +893,7 @@ function getAccount() { return data.accounts.find(a => a.id === currentAccountId
 
 function renderDetail() {
   const acc = getAccount(); if (!acc) return;
-  const txs = acc.transactions || [];
+  const txs     = acc.transactions || [];
   const balance = txs.reduce((s,t) => s+(t.type==='income'?t.amount:-t.amount), 0);
   document.getElementById('detail-name').textContent = acc.name;
   const balEl = document.getElementById('detail-balance');
@@ -776,7 +906,7 @@ function renderDetail() {
     return;
   }
   const groups = {};
-  [...txs].sort((a,b)=>new Date(b.date)-new Date(a.date)).forEach(t => {
+  [...txs].sort((a,b) => new Date(b.date)-new Date(a.date)).forEach(t => {
     const d = fmtDate(t.date);
     if (!groups[d]) groups[d] = [];
     groups[d].push(t);
@@ -833,11 +963,15 @@ function openAddTx(type) {
   document.getElementById('btn-save-tx').className = `btn btn-full ${type==='income'?'btn-green':'btn-red'}`;
   document.getElementById('input-tx-desc').value = '';
   document.getElementById('input-tx-amount').value = '';
+  // Reset calc
+  calcExpr = ''; calcHasResult = false;
+  document.getElementById('calc-display').textContent = '0';
+  document.getElementById('calc-popup').classList.add('hidden');
   openModal('modal-add-tx');
   setTimeout(() => document.getElementById('input-tx-desc').focus(), 100);
 }
 function saveTx() {
-  const desc = document.getElementById('input-tx-desc').value.trim();
+  const desc   = document.getElementById('input-tx-desc').value.trim();
   const amount = parseFloat(document.getElementById('input-tx-amount').value);
   if (!amount || amount <= 0) { toast('Ingresa un monto válido'); return; }
   getAccount().transactions.push({ id: uid(), type: currentTxType, desc, amount, date: nowISO() });
@@ -847,10 +981,73 @@ function saveTx() {
   toast(currentTxType==='income' ? 'Entrada agregada ✓' : 'Salida registrada ✓');
 }
 
+// ══════════════ CALCULATOR ══════════════
+function toggleCalc() {
+  document.getElementById('calc-popup').classList.toggle('hidden');
+}
+function calcAction(key) {
+  const display = document.getElementById('calc-display');
+  const ops = ['+','-','*','/'];
+
+  if (key === 'C') {
+    calcExpr = ''; calcHasResult = false;
+    display.textContent = '0'; return;
+  }
+  if (key === '⌫') {
+    calcExpr = calcExpr.slice(0,-1);
+    display.textContent = calcExpr || '0'; return;
+  }
+  if (key === '=') {
+    try {
+      const result = Function('"use strict"; return (' + calcExpr + ')')();
+      const rounded = Math.round(result * 100) / 100;
+      calcExpr = String(rounded);
+      calcHasResult = true;
+      display.textContent = rounded;
+      // Put result in amount field
+      document.getElementById('input-tx-amount').value = rounded > 0 ? rounded : '';
+    } catch(e) {
+      display.textContent = 'Error';
+      calcExpr = '';
+    }
+    return;
+  }
+  // If last result and user types a number, start fresh
+  if (calcHasResult && !ops.includes(key)) {
+    calcExpr = ''; calcHasResult = false;
+  }
+  // Prevent double operators
+  const lastChar = calcExpr.slice(-1);
+  if (ops.includes(key) && ops.includes(lastChar)) {
+    calcExpr = calcExpr.slice(0,-1);
+  }
+  calcExpr += key;
+  display.textContent = calcExpr;
+}
+
 // ══════════════ MODALS ══════════════
-function openModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function openModal(id)  { document.getElementById(id).classList.remove('hidden'); }
 function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 function closeModalOutside(e, id) { if (e.target.id===id) closeModal(id); }
+
+// Browser back button support
+window.addEventListener('popstate', (e) => {
+  const state = e.state;
+  // Close any open modal first
+  ['modal-new-account','modal-confirm-delete','modal-add-tx','modal-confirm-tx-delete'].forEach(id => {
+    if (!document.getElementById(id).classList.contains('hidden')) {
+      closeModal(id); return;
+    }
+  });
+  // If on detail screen, go back to home
+  if (!document.getElementById('screen-detail').classList.contains('hidden')) {
+    goBack();
+  }
+  // If on drive screen, close it
+  if (!document.getElementById('screen-drive').classList.contains('hidden')) {
+    closeDriveScreen();
+  }
+});
 
 document.addEventListener('keydown', e => {
   if (e.key==='Enter') {
@@ -862,40 +1059,11 @@ document.addEventListener('keydown', e => {
   }
 });
 
-// ══════════════ AUTO-SYNC ══════════════
-let lastSyncedData = null;
-
-async function autoSyncFromDrive() {
-  if (!accessToken) return;
-  try {
-    const fileId = await getDriveFileId();
-    if (!fileId) return;
-    const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
-      headers: { Authorization: 'Bearer ' + accessToken }
-    });
-    const d = await r.json();
-    if (!d.accounts) return;
-    const incoming = JSON.stringify(d);
-    // Only update if data actually changed
-    if (incoming === lastSyncedData) return;
-    lastSyncedData = incoming;
-    data = d;
-    saveLocal(data);
-    // Refresh current screen silently
-    const homeVisible = !document.getElementById('screen-home').classList.contains('hidden');
-    const detailVisible = !document.getElementById('screen-detail').classList.contains('hidden');
-    if (homeVisible) renderHome();
-    if (detailVisible) renderDetail();
-    showSync('✓ Sincronizado', 'success');
-  } catch(e) {}
-}
-
-// Start auto-sync every 30 seconds
-setInterval(autoSyncFromDrive, 30000);
-
 // ══════════════ INIT ══════════════
 data = loadLocal();
 renderHome();
+// Push initial home state
+history.replaceState({ screen: 'home' }, '');
 window.addEventListener('load', initGoogleAuth);
 </script>
 </body>
