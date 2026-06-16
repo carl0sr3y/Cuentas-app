@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -595,11 +595,16 @@ function signInWithGoogle() {
 
 function signOut() {
   accessToken = null; driveFileId = null; userInfo = null;
+  // Limpiar TODO — token, usuario, fileId Y datos locales
   localStorage.removeItem('cuentas_token');
   localStorage.removeItem('cuentas_user');
   localStorage.removeItem('cuentas_file_id');
+  localStorage.removeItem(LS_KEY);
+  // Resetear datos en memoria
+  data = { accounts: [] };
   updateDriveBtn(false);
   setSyncDot('off');
+  renderHome();
   toast('Sesión cerrada');
   renderDriveScreen();
 }
@@ -611,10 +616,9 @@ function updateDriveBtn(connected) {
 }
 
 // ══════════════ DRIVE API ══════════════
-async function getDriveFileId() {
-  if (driveFileId) return driveFileId;
-  const saved = localStorage.getItem('cuentas_file_id');
-  if (saved) { driveFileId = saved; return driveFileId; }
+async function getDriveFileId(forceSearch=false) {
+  if (!forceSearch && driveFileId) return driveFileId;
+  // Always search on Drive — don't trust cached ID on new devices
   const r = await fetch(
     'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name%3D%27' + DRIVE_FILE + '%27&fields=files(id)',
     { headers: { Authorization: 'Bearer ' + accessToken } }
@@ -623,23 +627,28 @@ async function getDriveFileId() {
   if (d.files && d.files.length > 0) {
     driveFileId = d.files[0].id;
     localStorage.setItem('cuentas_file_id', driveFileId);
+    return driveFileId;
   }
-  return driveFileId;
+  driveFileId = null;
+  localStorage.removeItem('cuentas_file_id');
+  return null;
 }
 
 async function saveToDrive() {
   if (!accessToken) return;
   setSyncDot('syncing');
   try {
-    const fileId = await getDriveFileId();
+    // Always search fresh to get correct fileId
+    const fileId = await getDriveFileId(true);
     const content = JSON.stringify(data);
     const blob = new Blob([content], { type: 'application/json' });
     if (fileId) {
-      await fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
         method: 'PATCH',
         headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
         body: content
       });
+      if (!res.ok) throw new Error('patch failed');
     } else {
       const meta = JSON.stringify({ name: DRIVE_FILE, parents: ['appDataFolder'] });
       const form = new FormData();
@@ -650,6 +659,7 @@ async function saveToDrive() {
         headers: { Authorization: 'Bearer ' + accessToken },
         body: form
       });
+      if (!r.ok) throw new Error('create failed');
       const d = await r.json();
       driveFileId = d.id;
       localStorage.setItem('cuentas_file_id', driveFileId);
@@ -657,25 +667,34 @@ async function saveToDrive() {
     setSyncDot('synced');
   } catch(e) {
     setSyncDot('error');
+    toast('✗ Error al guardar en Drive');
   }
 }
 
 async function loadFromDrive(silent=false) {
   if (!accessToken) return;
-  if (!silent) setSyncDot('syncing');
+  setSyncDot('syncing');
   try {
-    const fileId = await getDriveFileId();
-    if (!fileId) { if (!silent) toast('No hay datos en Drive aún'); return; }
+    // Force-search fileId — critical for new devices
+    const fileId = await getDriveFileId(true);
+    if (!fileId) {
+      setSyncDot('synced');
+      if (!silent) toast('No hay datos en Drive aún');
+      return;
+    }
     const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
+    if (!r.ok) throw new Error('fetch failed');
     const d = await r.json();
-    if (d.accounts) {
+    if (d && d.accounts) {
       data = d;
       saveLocal(data);
       renderHome();
       setSyncDot('synced');
       if (!silent) toast('✓ Datos cargados desde Drive');
+    } else {
+      setSyncDot('synced');
     }
   } catch(e) {
     setSyncDot('error');
@@ -696,11 +715,12 @@ let lastSyncedData = null;
 async function autoSyncFromDrive() {
   if (!accessToken) return;
   try {
-    const fileId = await getDriveFileId();
+    const fileId = await getDriveFileId(true);
     if (!fileId) return;
     const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
+    if (!r.ok) return;
     const d = await r.json();
     if (!d.accounts) return;
     const incoming = JSON.stringify(d);
