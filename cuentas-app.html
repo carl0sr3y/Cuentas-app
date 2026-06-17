@@ -558,9 +558,6 @@ function setSyncDot(state) {
 }
 
 // ══════════════ GOOGLE AUTH ══════════════
-let tokenClient = null;
-let tokenExpiresAt = 0;
-
 function initGoogleAuth() {
   const saved = localStorage.getItem('cuentas_token');
   const savedUser = localStorage.getItem('cuentas_user');
@@ -570,71 +567,58 @@ function initGoogleAuth() {
     updateDriveBtn(true);
     loadFromDrive(true);
   }
-  // Auto-refresh token every 45 minutes silently
-  setInterval(silentTokenRefresh, 45 * 60 * 1000);
 }
 
-function getTokenClient(callback) {
-  return google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPES + ' https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
-    prompt: '',
-    callback
-  });
-}
-
-function silentTokenRefresh() {
-  if (!userInfo) return; // Not logged in
-  const client = getTokenClient(async (resp) => {
-    if (resp.error) return; // Silent fail — will retry next interval
-    accessToken = resp.access_token;
-    localStorage.setItem('cuentas_token', accessToken);
-    tokenExpiresAt = Date.now() + 55 * 60 * 1000;
-  });
-  client.requestAccessToken({ prompt: '' });
-}
-
+// Renews token silently using stored email hint — only called on 401, never on a timer
 async function ensureFreshToken() {
-  // If token is about to expire or already expired, refresh it
   if (!userInfo) return false;
-  if (Date.now() < tokenExpiresAt) return true; // Still valid
   return new Promise((resolve) => {
-    const client = getTokenClient(async (resp) => {
-      if (resp.error) { resolve(false); return; }
-      accessToken = resp.access_token;
-      localStorage.setItem('cuentas_token', accessToken);
-      tokenExpiresAt = Date.now() + 55 * 60 * 1000;
-      resolve(true);
-    });
-    client.requestAccessToken({ prompt: '' });
+    try {
+      const client = google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES + ' https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+        login_hint: userInfo.email,
+        prompt: '',
+        callback: (resp) => {
+          if (resp.error) { resolve(false); return; }
+          accessToken = resp.access_token;
+          localStorage.setItem('cuentas_token', accessToken);
+          resolve(true);
+        }
+      });
+      client.requestAccessToken({ prompt: '' });
+    } catch(e) { resolve(false); }
   });
 }
 
 function signInWithGoogle() {
-  const client = getTokenClient(async (resp) => {
-    if (resp.error) { toast('Error al conectar con Google'); return; }
-    accessToken = resp.access_token;
-    tokenExpiresAt = Date.now() + 55 * 60 * 1000;
-    localStorage.setItem('cuentas_token', accessToken);
-    try {
-      const r = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-        headers: { Authorization: 'Bearer ' + accessToken }
-      });
-      userInfo = await r.json();
-      localStorage.setItem('cuentas_user', JSON.stringify(userInfo));
-    } catch(e) {}
-    updateDriveBtn(true);
-    toast('✓ Conectado con Google Drive');
-    const fileId = await getDriveFileId(true);
-    if (fileId) {
-      await loadFromDrive(false);
-    } else if (data.accounts && data.accounts.length > 0) {
-      await saveToDrive();
-      toast('✓ Datos subidos a Drive');
-    } else {
-      toast('Drive conectado — sin datos aún');
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES + ' https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+    callback: async (resp) => {
+      if (resp.error) { toast('Error al conectar con Google'); return; }
+      accessToken = resp.access_token;
+      localStorage.setItem('cuentas_token', accessToken);
+      try {
+        const r = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+          headers: { Authorization: 'Bearer ' + accessToken }
+        });
+        userInfo = await r.json();
+        localStorage.setItem('cuentas_user', JSON.stringify(userInfo));
+      } catch(e) {}
+      updateDriveBtn(true);
+      toast('✓ Conectado con Google Drive');
+      const fileId = await getDriveFileId(true);
+      if (fileId) {
+        await loadFromDrive(false);
+      } else if (data.accounts && data.accounts.length > 0) {
+        await saveToDrive();
+        toast('✓ Datos subidos a Drive');
+      } else {
+        toast('Drive conectado — sin datos aún');
+      }
+      renderDriveScreen();
     }
-    renderDriveScreen();
   });
   client.requestAccessToken();
 }
