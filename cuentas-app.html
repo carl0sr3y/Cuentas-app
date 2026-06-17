@@ -558,6 +558,9 @@ function setSyncDot(state) {
 }
 
 // ══════════════ GOOGLE AUTH ══════════════
+let tokenClient = null;
+let tokenExpiresAt = 0;
+
 function initGoogleAuth() {
   const saved = localStorage.getItem('cuentas_token');
   const savedUser = localStorage.getItem('cuentas_user');
@@ -567,40 +570,71 @@ function initGoogleAuth() {
     updateDriveBtn(true);
     loadFromDrive(true);
   }
+  // Auto-refresh token every 45 minutes silently
+  setInterval(silentTokenRefresh, 45 * 60 * 1000);
+}
+
+function getTokenClient(callback) {
+  return google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES + ' https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+    prompt: '',
+    callback
+  });
+}
+
+function silentTokenRefresh() {
+  if (!userInfo) return; // Not logged in
+  const client = getTokenClient(async (resp) => {
+    if (resp.error) return; // Silent fail — will retry next interval
+    accessToken = resp.access_token;
+    localStorage.setItem('cuentas_token', accessToken);
+    tokenExpiresAt = Date.now() + 55 * 60 * 1000;
+  });
+  client.requestAccessToken({ prompt: '' });
+}
+
+async function ensureFreshToken() {
+  // If token is about to expire or already expired, refresh it
+  if (!userInfo) return false;
+  if (Date.now() < tokenExpiresAt) return true; // Still valid
+  return new Promise((resolve) => {
+    const client = getTokenClient(async (resp) => {
+      if (resp.error) { resolve(false); return; }
+      accessToken = resp.access_token;
+      localStorage.setItem('cuentas_token', accessToken);
+      tokenExpiresAt = Date.now() + 55 * 60 * 1000;
+      resolve(true);
+    });
+    client.requestAccessToken({ prompt: '' });
+  });
 }
 
 function signInWithGoogle() {
-  const client = google.accounts.oauth2.initTokenClient({
-    client_id: CLIENT_ID,
-    scope: SCOPES + ' https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
-    callback: async (resp) => {
-      if (resp.error) { toast('Error al conectar con Google'); return; }
-      accessToken = resp.access_token;
-      localStorage.setItem('cuentas_token', accessToken);
-      try {
-        const r = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-          headers: { Authorization: 'Bearer ' + accessToken }
-        });
-        userInfo = await r.json();
-        localStorage.setItem('cuentas_user', JSON.stringify(userInfo));
-      } catch(e) {}
-      updateDriveBtn(true);
-      toast('✓ Conectado con Google Drive');
-      // First try to load from Drive — if Drive has data, use it
-      // Only upload local data if Drive is empty AND we have local accounts
-      const fileId = await getDriveFileId(true);
-      if (fileId) {
-        // Drive already has data — load it, don't overwrite
-        await loadFromDrive(false);
-      } else if (data.accounts && data.accounts.length > 0) {
-        // Drive is empty and we have local data — upload it
-        await saveToDrive();
-        toast('✓ Datos subidos a Drive');
-      } else {
-        toast('Drive conectado — sin datos aún');
-      }
-      renderDriveScreen();
+  const client = getTokenClient(async (resp) => {
+    if (resp.error) { toast('Error al conectar con Google'); return; }
+    accessToken = resp.access_token;
+    tokenExpiresAt = Date.now() + 55 * 60 * 1000;
+    localStorage.setItem('cuentas_token', accessToken);
+    try {
+      const r = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: 'Bearer ' + accessToken }
+      });
+      userInfo = await r.json();
+      localStorage.setItem('cuentas_user', JSON.stringify(userInfo));
+    } catch(e) {}
+    updateDriveBtn(true);
+    toast('✓ Conectado con Google Drive');
+    const fileId = await getDriveFileId(true);
+    if (fileId) {
+      await loadFromDrive(false);
+    } else if (data.accounts && data.accounts.length > 0) {
+      await saveToDrive();
+      toast('✓ Datos subidos a Drive');
+    } else {
+      toast('Drive conectado — sin datos aún');
     }
+    renderDriveScreen();
   });
   client.requestAccessToken();
 }
@@ -650,7 +684,7 @@ async function saveToDrive() {
   if (!accessToken) return;
   setSyncDot('syncing');
   try {
-    // Always search fresh to get correct fileId
+    await ensureFreshToken();
     const fileId = await getDriveFileId(true);
     const content = JSON.stringify(data);
     const blob = new Blob([content], { type: 'application/json' });
@@ -660,7 +694,17 @@ async function saveToDrive() {
         headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
         body: content
       });
-      if (!res.ok) throw new Error('patch failed');
+      if (res.status === 401) {
+        // Token expired — refresh and retry once
+        const ok = await ensureFreshToken();
+        if (!ok) throw new Error('auth');
+        const retry = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
+          method: 'PATCH',
+          headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+          body: content
+        });
+        if (!retry.ok) throw new Error('retry failed');
+      } else if (!res.ok) throw new Error('patch failed');
     } else {
       const meta = JSON.stringify({ name: DRIVE_FILE, parents: ['appDataFolder'] });
       const form = new FormData();
@@ -687,16 +731,23 @@ async function loadFromDrive(silent=false) {
   if (!accessToken) return;
   setSyncDot('syncing');
   try {
-    // Force-search fileId — critical for new devices
+    await ensureFreshToken();
     const fileId = await getDriveFileId(true);
     if (!fileId) {
       setSyncDot('synced');
       if (!silent) toast('No hay datos en Drive aún');
       return;
     }
-    const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
+    let r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
+    if (r.status === 401) {
+      const ok = await ensureFreshToken();
+      if (!ok) throw new Error('auth');
+      r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
+        headers: { Authorization: 'Bearer ' + accessToken }
+      });
+    }
     if (!r.ok) throw new Error('fetch failed');
     const d = await r.json();
     if (d && d.accounts) {
