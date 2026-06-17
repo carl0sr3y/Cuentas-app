@@ -668,7 +668,6 @@ async function saveToDrive() {
   if (!accessToken) return;
   setSyncDot('syncing');
   try {
-    await ensureFreshToken();
     const fileId = await getDriveFileId(true);
     const content = JSON.stringify(data);
     const blob = new Blob([content], { type: 'application/json' });
@@ -679,7 +678,6 @@ async function saveToDrive() {
         body: content
       });
       if (res.status === 401) {
-        // Token expired — refresh and retry once
         const ok = await ensureFreshToken();
         if (!ok) throw new Error('auth');
         const retry = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
@@ -715,7 +713,6 @@ async function loadFromDrive(silent=false) {
   if (!accessToken) return;
   setSyncDot('syncing');
   try {
-    await ensureFreshToken();
     const fileId = await getDriveFileId(true);
     if (!fileId) {
       setSyncDot('synced');
