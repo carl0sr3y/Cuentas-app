@@ -586,7 +586,7 @@ function initGoogleAuth() {
       loadFromDrive(true);
     } else {
       // Token expired — show reconnect banner, keep local data visible
-      showReconnectBanner();
+      showExpiredScreen();
     }
   }
 }
@@ -595,7 +595,7 @@ function isTokenValid() {
   return accessToken && Date.now() < tokenExpiresAt;
 }
 
-function showReconnectBanner() {
+function showExpiredScreen() {
   const bar = document.getElementById('sync-bar');
   if (!bar) return;
   bar.innerHTML = `⚠️ Sesión de Drive expiró — <span onclick="reconnectDrive()" style="text-decoration:underline;cursor:pointer;font-weight:700;">Reconectar</span>`;
@@ -701,7 +701,7 @@ async function getDriveFileId(forceSearch=false) {
 
 async function saveToDrive() {
   if (!accessToken) return;
-  if (!isTokenValid()) { showReconnectBanner(); return; }
+  if (!isTokenValid()) { showExpiredScreen(); return; }
   setSyncDot('syncing');
   try {
     const fileId = await getDriveFileId(true);
@@ -713,7 +713,7 @@ async function saveToDrive() {
         headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
         body: content
       });
-      if (res.status === 401) { showReconnectBanner(); return; }
+      if (res.status === 401) { showExpiredScreen(); return; }
       if (!res.ok) throw new Error('patch failed');
     } else {
       const meta = JSON.stringify({ name: DRIVE_FILE, parents: ['appDataFolder'] });
@@ -739,7 +739,7 @@ async function saveToDrive() {
 
 async function loadFromDrive(silent=false) {
   if (!accessToken) return;
-  if (!isTokenValid()) { showReconnectBanner(); return; }
+  if (!isTokenValid()) { showExpiredScreen(); return; }
   setSyncDot('syncing');
   try {
     const fileId = await getDriveFileId(true);
@@ -751,7 +751,7 @@ async function loadFromDrive(silent=false) {
     const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
-    if (r.status === 401) { showReconnectBanner(); return; }
+    if (r.status === 401) { showExpiredScreen(); return; }
     if (!r.ok) throw new Error('fetch failed');
     const d = await r.json();
     if (d && d.accounts) {
@@ -1154,6 +1154,66 @@ renderHome();
 // Push initial home state
 history.replaceState({ screen: 'home' }, '');
 window.addEventListener('load', initGoogleAuth);
+</script>
+<!-- SESSION EXPIRED OVERLAY -->
+<div id="overlay-expired" class="hidden" style="
+  position:fixed; inset:0; z-index:999;
+  background:var(--bg);
+  display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+  padding:32px; text-align:center;
+">
+  <div style="font-size:64px; margin-bottom:20px;">🔒</div>
+  <div style="font-size:22px; font-weight:800; margin-bottom:12px;">Sesión expirada</div>
+  <div style="font-size:15px; color:var(--text-muted); line-height:1.7; margin-bottom:32px; max-width:300px;">
+    Tu sesión de Google Drive expiró después de 1 hora de inactividad.<br><br>
+    Tus datos locales están seguros. Vuelve a conectarte para sincronizar.
+  </div>
+  <button onclick="reconectarDesdeExpiry()" style="
+    background:var(--accent); color:#fff;
+    border:none; border-radius:var(--radius);
+    padding:16px 32px; font-size:17px; font-weight:700;
+    cursor:pointer; width:100%; max-width:320px;
+    margin-bottom:12px;
+  ">Volver a conectar</button>
+  <button onclick="cerrarSesionDesdeExpiry()" style="
+    background:var(--surface2); color:var(--text-muted);
+    border:none; border-radius:var(--radius);
+    padding:14px 32px; font-size:15px; font-weight:600;
+    cursor:pointer; width:100%; max-width:320px;
+  ">Cerrar sesión</button>
+</div>
+
+<script>
+function showExpiredScreen() {
+  document.getElementById('overlay-expired').classList.remove('hidden');
+  setSyncDot('error');
+}
+function hideExpiredScreen() {
+  document.getElementById('overlay-expired').classList.add('hidden');
+}
+function reconectarDesdeExpiry() {
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES + ' https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+    login_hint: userInfo?.email || '',
+    callback: async (resp) => {
+      if (resp.error) { toast('Error al reconectar'); return; }
+      accessToken = resp.access_token;
+      tokenExpiresAt = Date.now() + 55 * 60 * 1000;
+      localStorage.setItem('cuentas_token', accessToken);
+      localStorage.setItem('cuentas_token_expiry', tokenExpiresAt.toString());
+      hideExpiredScreen();
+      updateDriveBtn(true);
+      await loadFromDrive(false);
+    }
+  });
+  client.requestAccessToken();
+}
+function cerrarSesionDesdeExpiry() {
+  hideExpiredScreen();
+  signOut();
+}
 </script>
 </body>
 </html>
