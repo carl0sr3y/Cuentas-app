@@ -88,6 +88,18 @@
   .sync-dot.error    { background: var(--red); }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
 
+  /* SYNC BAR */
+  .sync-bar {
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .sync-bar.error   { background: var(--red-dim);  color: var(--red); }
+  .sync-bar.success { background: var(--green-dim); color: var(--green); }
+
   /* BUTTONS */
   .main-actions { padding: 16px; display: flex; gap: 10px; }
   .btn {
@@ -377,8 +389,8 @@
       <span id="drive-status-text">Drive</span>
     </button>
   </div>
-  <div class="main-actions">
-    <button class="btn btn-primary" onclick="openModal('modal-new-account')">＋ Nueva cuenta</button>
+  <div id="sync-bar" class="sync-bar hidden"></div>
+  <div class="main-actions">    <button class="btn btn-primary" onclick="openModal('modal-new-account')">＋ Nueva cuenta</button>
     <button class="btn btn-danger" id="btn-delete-mode" onclick="toggleDeleteMode()">🗑 Eliminar</button>
   </div>
   <div class="section-label" id="accounts-label">Tus cuentas</div>
@@ -558,37 +570,58 @@ function setSyncDot(state) {
 }
 
 // ══════════════ GOOGLE AUTH ══════════════
+let tokenExpiresAt = 0;
+
 function initGoogleAuth() {
   const saved = localStorage.getItem('cuentas_token');
   const savedUser = localStorage.getItem('cuentas_user');
-  if (saved) {
+  const savedExpiry = localStorage.getItem('cuentas_token_expiry');
+  if (saved && savedUser) {
     accessToken = saved;
-    if (savedUser) userInfo = JSON.parse(savedUser);
+    userInfo = JSON.parse(savedUser);
+    tokenExpiresAt = parseInt(savedExpiry || '0');
     updateDriveBtn(true);
-    loadFromDrive(true);
+    // Only load from Drive if token is still valid
+    if (Date.now() < tokenExpiresAt) {
+      loadFromDrive(true);
+    } else {
+      // Token expired — show reconnect banner, keep local data visible
+      showReconnectBanner();
+    }
   }
 }
 
-// Renews token silently using stored email hint — only called on 401, never on a timer
-async function ensureFreshToken() {
-  if (!userInfo) return false;
-  return new Promise((resolve) => {
-    try {
-      const client = google.accounts.oauth2.initTokenClient({
-        client_id: CLIENT_ID,
-        scope: SCOPES + ' https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
-        login_hint: userInfo.email,
-        prompt: '',
-        callback: (resp) => {
-          if (resp.error) { resolve(false); return; }
-          accessToken = resp.access_token;
-          localStorage.setItem('cuentas_token', accessToken);
-          resolve(true);
-        }
-      });
-      client.requestAccessToken({ prompt: '' });
-    } catch(e) { resolve(false); }
+function isTokenValid() {
+  return accessToken && Date.now() < tokenExpiresAt;
+}
+
+function showReconnectBanner() {
+  const bar = document.getElementById('sync-bar');
+  if (!bar) return;
+  bar.innerHTML = `⚠️ Sesión de Drive expiró — <span onclick="reconnectDrive()" style="text-decoration:underline;cursor:pointer;font-weight:700;">Reconectar</span>`;
+  bar.className = 'sync-bar error';
+  bar.classList.remove('hidden');
+  setSyncDot('error');
+}
+
+function reconnectDrive() {
+  const client = google.accounts.oauth2.initTokenClient({
+    client_id: CLIENT_ID,
+    scope: SCOPES + ' https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+    login_hint: userInfo?.email || '',
+    callback: async (resp) => {
+      if (resp.error) { toast('Error al reconectar'); return; }
+      accessToken = resp.access_token;
+      tokenExpiresAt = Date.now() + 55 * 60 * 1000;
+      localStorage.setItem('cuentas_token', accessToken);
+      localStorage.setItem('cuentas_token_expiry', tokenExpiresAt.toString());
+      document.getElementById('sync-bar').classList.add('hidden');
+      updateDriveBtn(true);
+      toast('✓ Reconectado con Drive');
+      await loadFromDrive(false);
+    }
   });
+  client.requestAccessToken();
 }
 
 function signInWithGoogle() {
@@ -598,7 +631,9 @@ function signInWithGoogle() {
     callback: async (resp) => {
       if (resp.error) { toast('Error al conectar con Google'); return; }
       accessToken = resp.access_token;
+      tokenExpiresAt = Date.now() + 55 * 60 * 1000;
       localStorage.setItem('cuentas_token', accessToken);
+      localStorage.setItem('cuentas_token_expiry', tokenExpiresAt.toString());
       try {
         const r = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
           headers: { Authorization: 'Bearer ' + accessToken }
@@ -624,16 +659,16 @@ function signInWithGoogle() {
 }
 
 function signOut() {
-  accessToken = null; driveFileId = null; userInfo = null;
-  // Limpiar TODO — token, usuario, fileId Y datos locales
+  accessToken = null; driveFileId = null; userInfo = null; tokenExpiresAt = 0;
   localStorage.removeItem('cuentas_token');
   localStorage.removeItem('cuentas_user');
   localStorage.removeItem('cuentas_file_id');
+  localStorage.removeItem('cuentas_token_expiry');
   localStorage.removeItem(LS_KEY);
-  // Resetear datos en memoria
   data = { accounts: [] };
   updateDriveBtn(false);
   setSyncDot('off');
+  document.getElementById('sync-bar').classList.add('hidden');
   renderHome();
   toast('Sesión cerrada');
   renderDriveScreen();
@@ -666,6 +701,7 @@ async function getDriveFileId(forceSearch=false) {
 
 async function saveToDrive() {
   if (!accessToken) return;
+  if (!isTokenValid()) { showReconnectBanner(); return; }
   setSyncDot('syncing');
   try {
     const fileId = await getDriveFileId(true);
@@ -677,16 +713,8 @@ async function saveToDrive() {
         headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
         body: content
       });
-      if (res.status === 401) {
-        const ok = await ensureFreshToken();
-        if (!ok) throw new Error('auth');
-        const retry = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
-          method: 'PATCH',
-          headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
-          body: content
-        });
-        if (!retry.ok) throw new Error('retry failed');
-      } else if (!res.ok) throw new Error('patch failed');
+      if (res.status === 401) { showReconnectBanner(); return; }
+      if (!res.ok) throw new Error('patch failed');
     } else {
       const meta = JSON.stringify({ name: DRIVE_FILE, parents: ['appDataFolder'] });
       const form = new FormData();
@@ -711,6 +739,7 @@ async function saveToDrive() {
 
 async function loadFromDrive(silent=false) {
   if (!accessToken) return;
+  if (!isTokenValid()) { showReconnectBanner(); return; }
   setSyncDot('syncing');
   try {
     const fileId = await getDriveFileId(true);
@@ -719,16 +748,10 @@ async function loadFromDrive(silent=false) {
       if (!silent) toast('No hay datos en Drive aún');
       return;
     }
-    let r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
+    const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
-    if (r.status === 401) {
-      const ok = await ensureFreshToken();
-      if (!ok) throw new Error('auth');
-      r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
-        headers: { Authorization: 'Bearer ' + accessToken }
-      });
-    }
+    if (r.status === 401) { showReconnectBanner(); return; }
     if (!r.ok) throw new Error('fetch failed');
     const d = await r.json();
     if (d && d.accounts) {
