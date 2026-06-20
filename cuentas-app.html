@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Cuentas</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <style>
   :root {
     --bg: #1a1d23;
@@ -384,6 +386,9 @@
 <div id="screen-home">
   <div class="header">
     <div class="header-title">💼 Cuentas</div>
+    <button class="drive-btn" id="pdf-home-btn" onclick="exportAllAccountsPDF()" title="Exportar PDF">
+      📄
+    </button>
     <button class="drive-btn" id="drive-status-btn" onclick="openDriveScreen()">
       <span class="sync-dot" id="sync-dot"></span>
       <span id="drive-status-text">Drive</span>
@@ -406,6 +411,7 @@
   <div class="header">
     <button class="back-btn" onclick="goBack()">←</button>
     <div class="header-title" id="detail-name">Cuenta</div>
+    <button class="drive-btn" onclick="exportAccountPDF()" title="Exportar PDF">📄</button>
   </div>
   <div class="balance-hero">
     <div class="balance-label">Balance total</div>
@@ -566,7 +572,9 @@ function setSyncDot(state) {
   if (!dot) return;
   dot.className = 'sync-dot';
   if (state !== 'off') dot.classList.add(state);
-  if (state === 'synced') setTimeout(() => { dot.className = 'sync-dot synced'; }, 100);
+  if (state === 'synced' && !pendingChanges) {
+    setTimeout(() => { if (!pendingChanges) dot.className = 'sync-dot synced'; }, 100);
+  }
 }
 
 // ══════════════ GOOGLE AUTH ══════════════
@@ -618,7 +626,11 @@ function reconnectDrive() {
       document.getElementById('sync-bar').classList.add('hidden');
       updateDriveBtn(true);
       toast('✓ Reconectado con Drive');
-      await loadFromDrive(false);
+      if (pendingChanges) {
+        await attemptSaveWithRetry();
+      } else {
+        await loadFromDrive(false);
+      }
     }
   });
   client.requestAccessToken();
@@ -731,6 +743,8 @@ async function saveToDrive() {
       localStorage.setItem('cuentas_file_id', driveFileId);
     }
     setSyncDot('synced');
+    pendingChanges = false;
+    retryAttempts = 0;
   } catch(e) {
     setSyncDot('error');
     toast('✗ Error al guardar en Drive');
@@ -771,24 +785,100 @@ async function loadFromDrive(silent=false) {
 
 function scheduleSave() {
   saveLocal(data);
+  pendingChanges = true;
+  updatePendingBadge();
   if (!accessToken) return;
-  // Never overwrite Drive with empty data
   if (!data.accounts || data.accounts.length === 0) return;
   setSyncDot('syncing');
   clearTimeout(syncTimeout);
-  syncTimeout = setTimeout(() => saveToDrive(), 1500);
+  // 1.2s debounce — groups rapid edits (fast typing/clicking) into ONE save
+  syncTimeout = setTimeout(() => attemptSaveWithRetry(), 1200);
+}
+
+// ══════════════ RELIABLE SAVE QUEUE ══════════════
+let pendingChanges = false;
+let retryAttempts = 0;
+const MAX_RETRY_DELAY = 30000; // cap backoff at 30s
+
+function updatePendingBadge() {
+  const dot = document.getElementById('sync-dot');
+  if (!dot) return;
+  if (pendingChanges && (!accessToken || !isTokenValid())) {
+    dot.classList.add('error');
+  }
+}
+
+async function attemptSaveWithRetry() {
+  if (!accessToken) return;
+  if (!isTokenValid()) {
+    // Can't save now — token expired. Will retry once reconnected.
+    setSyncDot('error');
+    showExpiredScreen();
+    return;
+  }
+  const ok = await saveToDriveSafe();
+  if (ok) {
+    pendingChanges = false;
+    retryAttempts = 0;
+    setSyncDot('synced');
+  } else {
+    // Retry with increasing delay: 3s, 6s, 12s, 24s, capped at 30s
+    retryAttempts++;
+    const delay = Math.min(3000 * Math.pow(2, retryAttempts - 1), MAX_RETRY_DELAY);
+    setSyncDot('error');
+    clearTimeout(syncTimeout);
+    syncTimeout = setTimeout(() => attemptSaveWithRetry(), delay);
+  }
+}
+
+// Same as saveToDrive but returns true/false instead of just toasting
+async function saveToDriveSafe() {
+  if (!isTokenValid()) return false;
+  try {
+    const fileId = await getDriveFileId(true);
+    const content = JSON.stringify(data);
+    const blob = new Blob([content], { type: 'application/json' });
+    if (fileId) {
+      const res = await fetch('https://www.googleapis.com/upload/drive/v3/files/' + fileId + '?uploadType=media', {
+        method: 'PATCH',
+        headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+        body: content
+      });
+      if (res.status === 401) { showExpiredScreen(); return false; }
+      if (!res.ok) return false;
+    } else {
+      const meta = JSON.stringify({ name: DRIVE_FILE, parents: ['appDataFolder'] });
+      const form = new FormData();
+      form.append('metadata', new Blob([meta], { type: 'application/json' }));
+      form.append('file', blob);
+      const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + accessToken },
+        body: form
+      });
+      if (!r.ok) return false;
+      const d = await r.json();
+      driveFileId = d.id;
+      localStorage.setItem('cuentas_file_id', driveFileId);
+    }
+    return true;
+  } catch(e) { return false; }
 }
 
 // ══════════════ AUTO-SYNC ══════════════
 let lastSyncedData = null;
 async function autoSyncFromDrive() {
   if (!accessToken) return;
+  if (!isTokenValid()) { showExpiredScreen(); return; }
+  // If we have unsaved local changes, push them first instead of overwriting with stale Drive data
+  if (pendingChanges) { attemptSaveWithRetry(); return; }
   try {
     const fileId = await getDriveFileId(true);
     if (!fileId) return;
     const r = await fetch('https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media', {
       headers: { Authorization: 'Bearer ' + accessToken }
     });
+    if (r.status === 401) { showExpiredScreen(); return; }
     if (!r.ok) return;
     const d = await r.json();
     if (!d.accounts) return;
@@ -805,6 +895,36 @@ async function autoSyncFromDrive() {
   } catch(e) {}
 }
 setInterval(autoSyncFromDrive, 30000);
+
+// ══════════════ DETECT APP RETURNING TO FOREGROUND ══════════════
+// Fires when phone is unlocked / tab regains focus — catches expired
+// sessions and pending changes immediately, without needing a reload.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (!accessToken) return;
+  if (!isTokenValid()) {
+    showExpiredScreen();
+    return;
+  }
+  if (pendingChanges) {
+    attemptSaveWithRetry();
+  } else {
+    autoSyncFromDrive();
+  }
+});
+window.addEventListener('focus', () => {
+  if (!accessToken) return;
+  if (!isTokenValid()) { showExpiredScreen(); return; }
+  if (pendingChanges) attemptSaveWithRetry();
+});
+
+// Warn before closing/refreshing if there are unsaved changes
+window.addEventListener('beforeunload', (e) => {
+  if (pendingChanges) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 // ══════════════ DRIVE SCREEN ══════════════
 function openDriveScreen() {
@@ -1070,6 +1190,198 @@ function saveTx() {
   toast(currentTxType==='income' ? 'Entrada agregada ✓' : 'Salida registrada ✓');
 }
 
+// ══════════════ PDF EXPORT ══════════════
+function calcBalance(acc) {
+  return (acc.transactions||[]).reduce((s,t) => s+(t.type==='income'?t.amount:-t.amount), 0);
+}
+
+function pdfHeader(doc, title, subtitle) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  doc.setFillColor(34, 38, 47); // var(--surface)
+  doc.rect(0, 0, pageWidth, 38, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(18);
+  doc.text('💼 Cuentas', 14, 16);
+  doc.setFontSize(13);
+  doc.text(title, 14, 26);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(220, 220, 220);
+  doc.text(subtitle, 14, 33);
+  doc.setTextColor(0, 0, 0);
+  return 48; // y position after header
+}
+
+function pdfFooter(doc) {
+  const pageCount = doc.internal.getNumberOfPages();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setTextColor(150, 150, 150);
+    doc.text('Generado por Cuentas — ' + new Date().toLocaleString('es-GT'), 14, pageHeight - 8);
+    doc.text('Página ' + i + ' / ' + pageCount, pageWidth - 14, pageHeight - 8, { align: 'right' });
+  }
+}
+
+function exportAccountPDF() {
+  const acc = getAccount();
+  if (!acc) return;
+  if (typeof window.jspdf === 'undefined') { toast('Error: librería PDF no cargó'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const balance = calcBalance(acc);
+  const txs = [...(acc.transactions||[])].sort((a,b) => new Date(b.date)-new Date(a.date));
+
+  let y = pdfHeader(doc, acc.name, `Reporte de cuenta — ${txs.length} transacción${txs.length!==1?'es':''}`);
+
+  // Balance box
+  doc.setFillColor(245, 247, 250);
+  doc.roundedRect(14, y, 182, 22, 3, 3, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(100, 100, 100);
+  doc.text('BALANCE TOTAL', 20, y + 9);
+  doc.setFontSize(18);
+  if (balance >= 0) doc.setTextColor(30, 140, 90); else doc.setTextColor(210, 60, 60);
+  doc.text(fmt(balance), 20, y + 18);
+  doc.setTextColor(0,0,0);
+  y += 32;
+
+  if (!txs.length) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(11);
+    doc.setTextColor(120,120,120);
+    doc.text('Sin movimientos registrados.', 14, y + 4);
+  } else {
+    const rows = txs.map(t => {
+      const isIncome = t.type === 'income';
+      return [
+        fmtDate(t.date),
+        fmtTime(t.date),
+        t.desc || (isIncome ? 'Entrada' : 'Salida'),
+        isIncome ? 'Entrada' : 'Salida',
+        (isIncome ? '+' : '-') + fmt(t.amount)
+      ];
+    });
+    doc.autoTable({
+      startY: y,
+      head: [['Fecha', 'Hora', 'Descripción', 'Tipo', 'Monto']],
+      body: rows,
+      theme: 'striped',
+      headStyles: { fillColor: [91, 141, 245], textColor: 255, fontStyle: 'bold' },
+      styles: { fontSize: 9, cellPadding: 3 },
+      columnStyles: { 4: { halign: 'right', fontStyle: 'bold' } },
+      didParseCell: function(data) {
+        if (data.section === 'body' && data.column.index === 4) {
+          const isIncome = data.cell.raw.toString().startsWith('+');
+          data.cell.styles.textColor = isIncome ? [30,140,90] : [210,60,60];
+        }
+      }
+    });
+  }
+
+  pdfFooter(doc);
+  const safeName = acc.name.replace(/[^a-z0-9]/gi, '_');
+  doc.save(`Cuentas_${safeName}_${new Date().toISOString().slice(0,10)}.pdf`);
+  toast('✓ PDF generado');
+}
+
+function exportAllAccountsPDF() {
+  if (typeof window.jspdf === 'undefined') { toast('Error: librería PDF no cargó'); return; }
+  if (!data.accounts.length) { toast('No hay cuentas para exportar'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  const totalBalance = data.accounts.reduce((s,a) => s + calcBalance(a), 0);
+  let y = pdfHeader(doc, 'Resumen general', `${data.accounts.length} cuenta${data.accounts.length!==1?'s':''} — Generado ${new Date().toLocaleDateString('es-GT')}`);
+
+  // Total balance box
+  doc.setFillColor(245, 247, 250);
+  doc.roundedRect(14, y, 182, 22, 3, 3, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(100, 100, 100);
+  doc.text('BALANCE TOTAL (todas las cuentas)', 20, y + 9);
+  doc.setFontSize(18);
+  if (totalBalance >= 0) doc.setTextColor(30, 140, 90); else doc.setTextColor(210, 60, 60);
+  doc.text(fmt(totalBalance), 20, y + 18);
+  doc.setTextColor(0,0,0);
+  y += 32;
+
+  // Accounts summary table
+  const sorted = [...data.accounts].sort((a,b) => {
+    if (!!a.favorite === !!b.favorite) return a.name.localeCompare(b.name, 'es');
+    return a.favorite ? -1 : 1;
+  });
+  const summaryRows = sorted.map(a => {
+    const bal = calcBalance(a);
+    const count = (a.transactions||[]).length;
+    return [(a.favorite ? '⭐ ' : '') + a.name, count.toString(), fmt(bal)];
+  });
+  doc.autoTable({
+    startY: y,
+    head: [['Cuenta', 'Transacciones', 'Balance']],
+    body: summaryRows,
+    theme: 'striped',
+    headStyles: { fillColor: [91, 141, 245], textColor: 255, fontStyle: 'bold' },
+    styles: { fontSize: 10, cellPadding: 4 },
+    columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right', fontStyle: 'bold' } },
+    didParseCell: function(d) {
+      if (d.section === 'body' && d.column.index === 2) {
+        const isNeg = d.cell.raw.toString().startsWith('-');
+        d.cell.styles.textColor = isNeg ? [210,60,60] : [30,140,90];
+      }
+    }
+  });
+
+  // Detail per account, each starting on a new page
+  sorted.forEach(acc => {
+    doc.addPage();
+    const bal = calcBalance(acc);
+    const txs = [...(acc.transactions||[])].sort((a,b) => new Date(b.date)-new Date(a.date));
+    let yy = pdfHeader(doc, acc.name, `${txs.length} transacción${txs.length!==1?'es':''} — Balance: ${fmt(bal)}`);
+
+    if (!txs.length) {
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(11);
+      doc.setTextColor(120,120,120);
+      doc.text('Sin movimientos registrados.', 14, yy + 4);
+    } else {
+      const rows = txs.map(t => {
+        const isIncome = t.type === 'income';
+        return [
+          fmtDate(t.date), fmtTime(t.date),
+          t.desc || (isIncome ? 'Entrada' : 'Salida'),
+          isIncome ? 'Entrada' : 'Salida',
+          (isIncome ? '+' : '-') + fmt(t.amount)
+        ];
+      });
+      doc.autoTable({
+        startY: yy,
+        head: [['Fecha', 'Hora', 'Descripción', 'Tipo', 'Monto']],
+        body: rows,
+        theme: 'striped',
+        headStyles: { fillColor: [91, 141, 245], textColor: 255, fontStyle: 'bold' },
+        styles: { fontSize: 9, cellPadding: 3 },
+        columnStyles: { 4: { halign: 'right', fontStyle: 'bold' } },
+        didParseCell: function(d) {
+          if (d.section === 'body' && d.column.index === 4) {
+            const isIncome = d.cell.raw.toString().startsWith('+');
+            d.cell.styles.textColor = isIncome ? [30,140,90] : [210,60,60];
+          }
+        }
+      });
+    }
+  });
+
+  pdfFooter(doc);
+  doc.save(`Cuentas_Resumen_General_${new Date().toISOString().slice(0,10)}.pdf`);
+  toast('✓ PDF generado');
+}
+
 // ══════════════ CALCULATOR ══════════════
 function toggleCalc() {
   document.getElementById('calc-popup').classList.toggle('hidden');
@@ -1205,7 +1517,12 @@ function reconectarDesdeExpiry() {
       localStorage.setItem('cuentas_token_expiry', tokenExpiresAt.toString());
       hideExpiredScreen();
       updateDriveBtn(true);
-      await loadFromDrive(false);
+      if (pendingChanges) {
+        toast('Subiendo cambios pendientes...');
+        await attemptSaveWithRetry();
+      } else {
+        await loadFromDrive(false);
+      }
     }
   });
   client.requestAccessToken();
@@ -1217,3 +1534,4 @@ function cerrarSesionDesdeExpiry() {
 </script>
 </body>
 </html>
+
