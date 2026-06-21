@@ -60,7 +60,7 @@
     flex-shrink: 0;
   }
   .back-btn:active { opacity: .7; }
-  .header-title { font-size: 20px; font-weight: 700; flex: 1; }
+  .header-title { font-size: 18px; font-weight: 700; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* DRIVE BUTTON + SYNC INDICATOR */
   .drive-btn {
@@ -68,13 +68,14 @@
     border: 1.5px solid var(--border);
     color: var(--text-muted);
     border-radius: 20px;
-    padding: 6px 12px;
-    font-size: 12px;
+    padding: 6px 10px;
+    font-size: 14px;
     font-weight: 600;
     cursor: pointer;
     display: flex; align-items: center; gap: 6px;
     white-space: nowrap;
     transition: all .15s;
+    flex-shrink: 0;
   }
   .drive-btn.connected { color: var(--green); border-color: var(--green-dim); }
   .drive-btn:active { opacity: .7; }
@@ -386,6 +387,9 @@
 <div id="screen-home">
   <div class="header">
     <div class="header-title">💼 Cuentas</div>
+    <button class="drive-btn" id="notif-btn" onclick="toggleNotifs()" title="Notificaciones">
+      <span class="notif-icon">🔕</span>
+    </button>
     <button class="drive-btn" id="pdf-home-btn" onclick="exportAllAccountsPDF()" title="Exportar PDF">
       📄
     </button>
@@ -865,6 +869,70 @@ async function saveToDriveSafe() {
   } catch(e) { return false; }
 }
 
+// ══════════════ NOTIFICACIONES (ligero, solo con pestaña abierta) ══════════════
+let notifsEnabled = localStorage.getItem('cuentas_notifs') === 'on';
+
+function updateNotifBtn() {
+  const btn = document.getElementById('notif-btn');
+  if (!btn) return;
+  btn.classList.toggle('connected', notifsEnabled);
+  btn.querySelector('.notif-icon').textContent = notifsEnabled ? '🔔' : '🔕';
+}
+
+async function toggleNotifs() {
+  if (notifsEnabled) {
+    notifsEnabled = false;
+    localStorage.setItem('cuentas_notifs', 'off');
+    updateNotifBtn();
+    toast('Notificaciones desactivadas');
+    return;
+  }
+  if (!('Notification' in window)) {
+    toast('Tu navegador no soporta notificaciones');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm === 'granted') {
+    notifsEnabled = true;
+    localStorage.setItem('cuentas_notifs', 'on');
+    updateNotifBtn();
+    toast('🔔 Notificaciones activadas');
+    new Notification('Cuentas', { body: 'Te avisaremos cuando haya movimientos nuevos mientras tengas esta pestaña abierta.', icon: '' });
+  } else {
+    toast('Permiso de notificaciones denegado');
+  }
+}
+
+function notify(title, body) {
+  if (!notifsEnabled) return;
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  // Don't notify if the tab is the one currently focused/visible — only useful for background tabs
+  if (document.visibilityState === 'visible' && document.hasFocus()) return;
+  try { new Notification(title, { body, icon: '' }); } catch(e) {}
+}
+
+// Compares old vs new data and returns a human description of what changed
+function describeChanges(oldData, newData) {
+  const oldAccs = {}; (oldData.accounts||[]).forEach(a => oldAccs[a.id] = a);
+  const messages = [];
+
+  (newData.accounts||[]).forEach(newAcc => {
+    const oldAcc = oldAccs[newAcc.id];
+    if (!oldAcc) {
+      messages.push(`Nueva cuenta: "${newAcc.name}"`);
+      return;
+    }
+    const oldTxIds = new Set((oldAcc.transactions||[]).map(t => t.id));
+    const newTxs = (newAcc.transactions||[]).filter(t => !oldTxIds.has(t.id));
+    newTxs.forEach(t => {
+      const isIncome = t.type === 'income';
+      const label = t.desc || (isIncome ? 'Entrada' : 'Salida');
+      messages.push(`${newAcc.name}: ${isIncome?'+':'-'}${fmt(t.amount)} (${label})`);
+    });
+  });
+  return messages;
+}
+
 // ══════════════ AUTO-SYNC ══════════════
 let lastSyncedData = null;
 async function autoSyncFromDrive() {
@@ -884,6 +952,16 @@ async function autoSyncFromDrive() {
     if (!d.accounts) return;
     const incoming = JSON.stringify(d);
     if (incoming === lastSyncedData) return;
+
+    // Detect what changed BEFORE overwriting local data, to notify about it
+    if (lastSyncedData) {
+      try {
+        const oldParsed = JSON.parse(lastSyncedData);
+        const changes = describeChanges(oldParsed, d);
+        changes.forEach(msg => notify('Cuentas — Nuevo movimiento', msg));
+      } catch(e) {}
+    }
+
     lastSyncedData = incoming;
     data = d;
     saveLocal(data);
@@ -1463,6 +1541,7 @@ document.addEventListener('keydown', e => {
 // ══════════════ INIT ══════════════
 data = loadLocal();
 renderHome();
+updateNotifBtn();
 // Push initial home state
 history.replaceState({ screen: 'home' }, '');
 window.addEventListener('load', initGoogleAuth);
